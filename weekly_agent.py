@@ -156,7 +156,7 @@ def main():
         from ghl import GHL
         ghl = GHL(GHL_TOKEN, GHL_LOCATION_ID)
 
-    loaded = skipped = enriched = 0
+    loaded = skipped = enriched = errors = no_contact = 0
     for op_id, rows in facilities.items():
         r0 = rows[0]
         programs = {program_for(r["violation_type"]) for r in rows}
@@ -166,9 +166,11 @@ def main():
 
         wf = PROGRAM_WF[primary]
         vt = ", ".join(sorted({r["violation_type"] for r in rows}))
+        phone = clean_phone(r0["phone"])
+        email = r0["email"] or None
         # Route: no email + Clay configured -> enrich via Clay (which writes to
         # GHL). Otherwise this agent loads GHL directly.
-        via_clay = CLAY_WEBHOOK_URL and not r0["email"]
+        via_clay = bool(CLAY_WEBHOOK_URL) and not email
         dest = "Clay->GHL (enrich)" if via_clay else "GHL direct"
         print(f"- {name} ({r0['city']}, {r0['county']}) "
               f"-> {dest} | primary: {primary} | tags: {tags} | types: {vt}")
@@ -180,39 +182,57 @@ def main():
                 loaded += 1
             continue
 
-        if via_clay:
-            post_to_clay(clay_payload(op_id, rows, primary, tags))
-            print("    sent to Clay for enrichment (Clay will write to GHL)")
-            enriched += 1
-            continue
+        # Isolate each facility so one bad record can't kill the whole run.
+        try:
+            if via_clay:
+                post_to_clay(clay_payload(op_id, rows, primary, tags))
+                print("    sent to Clay for enrichment (Clay will write to GHL)")
+                enriched += 1
+                continue
 
-        contact_id, existing = ghl.upsert_contact(
-            name=name, company_name=name,
-            phone=clean_phone(r0["phone"]), email=(r0["email"] or None),
-            address=r0["location_address"], city=r0["city"], state="TX",
-            postal_code=r0["zip"], source="TX CCR weekly", tags=tags,
-            website=r0["compliance_page"])   # stored so the weekly digest can link it
+            # GoHighLevel needs at least a phone or an email to create a contact.
+            if not phone and not email:
+                print("    skipped: no phone or email in the open data -- can't "
+                      "create a GHL contact. Enrich by hand from "
+                      f"{r0['compliance_page']}  (or set CLAY_WEBHOOK_URL to enrich)")
+                no_contact += 1
+                continue
 
-        # already in this program? skip enrollment + note (no double-touch)
-        program_tag = PROGRAM_TAG[primary]
-        if program_tag in (existing or []):
-            print(f"    already tagged '{program_tag}' -> skip enroll")
-            skipped += 1
-            continue
+            contact_id, existing = ghl.upsert_contact(
+                name=name, company_name=name,
+                phone=phone, email=email,
+                address=r0["location_address"], city=r0["city"], state="TX",
+                postal_code=r0["zip"], source="TX CCR weekly", tags=tags,
+                website=r0["compliance_page"])  # stored so the digest can link it
 
-        ghl.add_note(contact_id, build_note(rows))
-        if wf:
-            ghl.add_to_workflow(contact_id, wf)
-            print(f"    enrolled in workflow {wf}")
-        else:
-            print(f"    (!) no workflow id set for '{primary}' -- tagged only")
-        loaded += 1
+            # already in this program? skip enrollment + note (no double-touch)
+            program_tag = PROGRAM_TAG[primary]
+            if program_tag in (existing or []):
+                print(f"    already tagged '{program_tag}' -> skip enroll")
+                skipped += 1
+                continue
 
-    print(f"\nDone. {loaded} loaded to GHL directly, {enriched} sent to Clay "
-          f"for enrichment, {skipped} skipped (already enrolled).")
+            ghl.add_note(contact_id, build_note(rows))
+            if wf:
+                ghl.add_to_workflow(contact_id, wf)
+                print(f"    enrolled in workflow {wf}")
+            else:
+                print(f"    (!) no workflow id set for '{primary}' -- tagged only")
+            loaded += 1
+        except Exception as e:
+            print(f"    ! error for {name}: {e}")
+            errors += 1
+
+    print(f"\nDone. {loaded} loaded to GHL, {enriched} sent to Clay, "
+          f"{skipped} already enrolled, {no_contact} skipped (no phone/email), "
+          f"{errors} errored.")
     if DRY_RUN:
         print("Set GHL_TOKEN and GHL_LOCATION_ID to run live"
               + (" (and CLAY_WEBHOOK_URL to enrich)." if not CLAY_WEBHOOK_URL else "."))
+    # Fail the run only if nothing succeeded but something errored -- that signals
+    # a systemic problem (bad token, wrong IDs) rather than one odd record.
+    if errors and not (loaded or enriched):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
