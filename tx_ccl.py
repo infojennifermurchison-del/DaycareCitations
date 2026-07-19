@@ -287,6 +287,28 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
                 return c
         return None
 
+    # correction status: a deficiency is "corrected" if it was fixed at the
+    # inspection, or has a corrected/verified date. Uncorrected = still open.
+    c_insp = has("corrected_at_inspection")
+    c_date = has("corrected_date")
+    c_ver = has("date_correction_verified")
+
+    def _truthy(v):
+        return str(v).strip().lower() in ("true", "t", "y", "yes", "1")
+
+    def _nonempty(series):
+        s = series.fillna("").astype(str).str.strip()
+        return (s != "") & (s.str.lower() != "nan")
+
+    corr = pd.Series(False, index=training.index)
+    if c_insp:
+        corr = corr | training[c_insp].apply(_truthy)
+    if c_date:
+        corr = corr | _nonempty(training[c_date])
+    if c_ver:
+        corr = corr | _nonempty(training[c_ver])
+    training["is_corrected"] = corr.map({True: "yes", False: "no"})
+
     rename = {
         NC_OP: "operation_id",
         has("operation_name"): "operation_name",
@@ -299,6 +321,8 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
         has("zip"): "zip",
         has("phone") or has("phone_number"): "phone",
         has("email_address") or has("email"): "email",
+        c_date: "corrected_date",
+        c_ver: "date_correction_verified",
         INSP_DATE: "activity_date",
         NC_STD: "standard_number_description",
         NC_RISK: "standard_risk_level",
@@ -311,7 +335,8 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
                 "location_address", "mailing_address", "city",
                 "county", "zip", "phone", "email", "activity_date",
                 "standard_number_description", "standard_risk_level", "narrative",
-                "violation_type", "compliance_page"]
+                "violation_type", "is_corrected", "corrected_date",
+                "date_correction_verified", "compliance_page"]
     for c in out_cols:
         if c not in training.columns:
             training[c] = ""

@@ -80,6 +80,12 @@ DAYCARE_ONLY = os.environ.get("DAYCARE_ONLY", "true").strip().lower() in ("1", "
 RESIDENTIAL_RE = re.compile(
     r"residential|general residential|\bgro\b|treatment center|child.?placing", re.I)
 
+# Only pursue daycares whose citation is STILL OPEN. If the deficiency was
+# already corrected (fixed at inspection, or has a corrected/verified date),
+# skip it -- no point offering training for a problem they've fixed. Set
+# ONLY_UNCORRECTED=false to include corrected ones too.
+ONLY_UNCORRECTED = os.environ.get("ONLY_UNCORRECTED", "true").strip().lower() in ("1", "true", "yes")
+
 # DRY-RUN if there's no GHL token, OR if explicitly forced (the "dry run" toggle
 # on the GitHub Actions "Run workflow" button sets DRY_RUN_FORCE=true).
 _FORCE_DRY = os.environ.get("DRY_RUN_FORCE", "").strip().lower() in ("1", "true", "yes")
@@ -178,7 +184,7 @@ def main():
         from ghl import GHL
         ghl = GHL(GHL_TOKEN, GHL_LOCATION_ID)
 
-    loaded = skipped = enriched = errors = no_contact = out_of_scope = 0
+    loaded = skipped = enriched = errors = no_contact = out_of_scope = corrected_skip = 0
     for op_id, rows in facilities.items():
         r0 = rows[0]
         name = r0["operation_name"] or f"Operation {op_id}"
@@ -199,14 +205,24 @@ def main():
                   f"({r0.get('operation_type','')}), not a daycare")
             out_of_scope += 1
             continue
-        if not (types & ALLOWED_TYPES):
+        allowed_rows = [r for r in rows if r["violation_type"] in ALLOWED_TYPES]
+        if not allowed_rows:
             print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: not "
                   f"orientation/director-training (types: {vt})")
             out_of_scope += 1
             continue
 
-        programs = {program_for(r["violation_type"]) for r in rows
-                    if r["violation_type"] in ALLOWED_TYPES}
+        # Keep only citations still open (unless ONLY_UNCORRECTED is off).
+        open_rows = [r for r in allowed_rows
+                     if not ONLY_UNCORRECTED
+                     or str(r.get("is_corrected", "")).strip().lower() != "yes"]
+        if not open_rows:
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: citation "
+                  f"already corrected")
+            corrected_skip += 1
+            continue
+
+        programs = {program_for(r["violation_type"]) for r in open_rows}
         primary = pick_primary(programs)
         tags = [TAG_BASE] + [PROGRAM_TAG[p] for p in programs]
 
@@ -221,7 +237,7 @@ def main():
               f"-> {dest} | primary: {primary} | tags: {tags} | types: {vt}")
         print(f"    contact: {r0.get('contact_name') or 'n/a'}  |  "
               f"phone: {r0.get('phone') or 'n/a'}  |  email: {r0.get('email') or 'n/a'}")
-        print(f"    page: {r0.get('compliance_page') or 'n/a'}")
+        print(f"    citation status: OPEN (uncorrected)  |  page: {r0.get('compliance_page') or 'n/a'}")
 
         if DRY_RUN:
             if via_clay:
@@ -280,6 +296,7 @@ def main():
 
     print(f"\nDone. {loaded} loaded to GHL, {enriched} sent to Clay, "
           f"{skipped} already enrolled, {no_contact} skipped (no phone/email), "
+          f"{corrected_skip} skipped (already corrected), "
           f"{out_of_scope} out of scope (not daycare / not orientation-director), "
           f"{errors} errored.")
     if DRY_RUN:
