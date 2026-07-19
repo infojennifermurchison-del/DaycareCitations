@@ -69,6 +69,11 @@ ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
     "Orientation,Director training"
 ).split(",") if t.strip())
 
+# Manual exclude list: operation IDs to never load (e.g. franchise-tax
+# delinquent, or otherwise disqualified after review). Comma-separated.
+EXCLUDE_IDS = set(x.strip() for x in
+                  os.environ.get("EXCLUDE_OPERATION_IDS", "").split(",") if x.strip())
+
 # Drop residential operations (RTC / GRO / child-placing) -- this is a daycare
 # funnel. Set DAYCARE_ONLY=false to include them.
 DAYCARE_ONLY = os.environ.get("DAYCARE_ONLY", "true").strip().lower() in ("1", "true", "yes")
@@ -179,6 +184,13 @@ def main():
         name = r0["operation_name"] or f"Operation {op_id}"
         types = {r["violation_type"] for r in rows}
         vt = ", ".join(sorted(types))
+
+        # Manual exclude list (e.g. franchise-tax delinquent).
+        if str(op_id) in EXCLUDE_IDS:
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: on manual "
+                  f"exclude list (operation_id {op_id})")
+            out_of_scope += 1
+            continue
 
         # Scope filters: daycares only, and only orientation/director-training
         # (training-hours) citations.

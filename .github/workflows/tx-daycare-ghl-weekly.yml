@@ -20,6 +20,10 @@ on:
         type: choice
         options: [auto, today]
         default: auto
+      exclude_ids:
+        description: "Operation IDs to skip (comma-separated) e.g. tax-delinquent"
+        type: string
+        default: ""
 
 jobs:
   load-citations:
@@ -47,6 +51,7 @@ jobs:
           DRY_RUN_FORCE:          ${{ inputs.dry_run }}
           DAYS_BACK:              ${{ inputs.days_back }}
           ANCHOR:                 ${{ inputs.anchor }}
+          EXCLUDE_OPERATION_IDS:  ${{ inputs.exclude_ids }}
           # Optional overrides (safe to omit -> defaults in weekly_agent.py):
           # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, PRIORITY
         run: python weekly_agent.py
