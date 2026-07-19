@@ -48,7 +48,8 @@ class GHL:
         raise GHLError(f"{method} {path} failed after {self.max_retries} retries")
 
     # -- contacts -----------------------------------------------------------
-    def upsert_contact(self, *, name=None, phone=None, email=None, address=None,
+    def upsert_contact(self, *, name=None, first_name=None, last_name=None,
+                       phone=None, email=None, address=None,
                        city=None, state=None, postal_code=None, source=None,
                        tags=None, custom_fields=None, company_name=None,
                        website=None):
@@ -56,6 +57,8 @@ class GHL:
         Returns (contact_id, existing_tags)."""
         body = {"locationId": self.location_id}
         if name:         body["name"] = name
+        if first_name:   body["firstName"] = first_name
+        if last_name:    body["lastName"] = last_name
         if company_name: body["companyName"] = company_name
         if phone:        body["phone"] = phone
         if email:        body["email"] = email

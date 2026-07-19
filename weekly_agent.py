@@ -97,6 +97,7 @@ def clay_payload(op_id, rows, primary, tags):
     return {
         "operation_id": op_id,
         "business_name": r0["operation_name"] or f"Operation {op_id}",
+        "contact_name": r0.get("contact_name", ""),
         "address": r0["location_address"],
         "city": r0["city"],
         "state": "TX",
@@ -198,9 +199,16 @@ def main():
                 no_contact += 1
                 continue
 
+            # director/administrator name from the open data, if present
+            contact_name = (r0.get("contact_name") or "").strip()
+            first = last = None
+            if contact_name:
+                parts = contact_name.split()
+                first, last = parts[0], (" ".join(parts[1:]) or None)
+
             contact_id, existing = ghl.upsert_contact(
-                name=name, company_name=name,
-                phone=phone, email=email,
+                name=(contact_name or name), first_name=first, last_name=last,
+                company_name=name, phone=phone, email=email,
                 address=r0["location_address"], city=r0["city"], state="TX",
                 postal_code=r0["zip"], source="TX CCR weekly", tags=tags,
                 website=r0["compliance_page"])  # stored so the digest can link it

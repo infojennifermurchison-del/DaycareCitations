@@ -236,21 +236,28 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     # 5) Operations -> facility details
     op_ids = [str(x) for x in training[NC_OP].dropna().unique()] if NC_OP else []
     if op_ids:
+        # Only use the sample row to find the (never-null) join id + its type.
+        # DON'T use it to choose which columns to keep: Socrata omits null fields
+        # per row, so sparse columns like phone_number/email_address are missing
+        # from an arbitrary sample row. We select KEEP columns from the union of
+        # all fetched rows (pd.DataFrame keys) instead.
         op_sample = _get(s, OPERATIONS_ID, {"$limit": 1})
         op_cols = list(op_sample[0].keys()) if op_sample else []
         OP_JOIN = _pick(op_cols, ["operation_id", "operation_number"], ["operation"])
-        OP_JOIN_NUM = _col_is_numeric(op_sample[0], OP_JOIN)
-        wanted = [c for c in op_cols if c.lower() in (
-            "operation_name", "operation_type", "type", "location_address",
-            "address", "city", "county", "zip", "phone", "phone_number",
-            "email_address", "email", "website_address")]
+        OP_JOIN_NUM = _col_is_numeric(op_sample[0], OP_JOIN) if op_sample else True
         frames = []
         for batch in _chunked(op_ids, 200):
             frames.append(_get_all(s, OPERATIONS_ID,
                                    where=_in_clause(OP_JOIN, batch, OP_JOIN_NUM)))
         ops = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         if not ops.empty:
-            keep = list(dict.fromkeys([OP_JOIN] + [c for c in wanted if c in ops.columns]))
+            TARGET = ("operation_name", "operation_type", "type",
+                      "location_address", "address", "mailing_address",
+                      "city", "county", "zip", "phone", "phone_number",
+                      "email_address", "email", "website_address",
+                      "administrator_director_name", "director_name")
+            keep = list(dict.fromkeys(
+                [OP_JOIN] + [c for c in ops.columns if c.lower() in TARGET]))
             ops = ops[keep].drop_duplicates(OP_JOIN)
             ops[OP_JOIN] = ops[OP_JOIN].astype(str)
             training[NC_OP] = training[NC_OP].astype(str)
@@ -277,7 +284,9 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     rename = {
         NC_OP: "operation_id",
         has("operation_name"): "operation_name",
+        has("administrator_director_name") or has("director_name"): "contact_name",
         has("location_address") or has("address"): "location_address",
+        has("mailing_address"): "mailing_address",
         has("city"): "city",
         has("county"): "county",
         has("zip"): "zip",
@@ -291,7 +300,8 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     rename = {k: v for k, v in rename.items() if k and k in training.columns}
     training = training.rename(columns=rename)
 
-    out_cols = ["operation_id", "operation_name", "location_address", "city",
+    out_cols = ["operation_id", "operation_name", "contact_name",
+                "location_address", "mailing_address", "city",
                 "county", "zip", "phone", "email", "activity_date",
                 "standard_number_description", "standard_risk_level", "narrative",
                 "violation_type", "compliance_page"]
