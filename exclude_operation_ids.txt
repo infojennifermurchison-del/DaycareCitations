@@ -1,0 +1,6 @@
+# Operation IDs to permanently exclude from loading (one per line).
+# Add "# reason" after an ID for your own reference. The weekly agent reads this
+# file on every run (scheduled and manual), so anything here is always skipped.
+# To re-include a daycare later, delete its line.
+
+1466232   # Trusting Hands Learning Center #2 - delinquent franchise tax (uncorrected)

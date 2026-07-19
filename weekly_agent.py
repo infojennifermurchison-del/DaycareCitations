@@ -70,9 +70,18 @@ ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
 ).split(",") if t.strip())
 
 # Manual exclude list: operation IDs to never load (e.g. franchise-tax
-# delinquent, or otherwise disqualified after review). Comma-separated.
+# delinquent, or otherwise disqualified after review). Sourced from BOTH the
+# EXCLUDE_OPERATION_IDS env var (one-off runs) AND a committed file
+# (exclude_operation_ids.txt) so the scheduled weekly run honors it too.
 EXCLUDE_IDS = set(x.strip() for x in
                   os.environ.get("EXCLUDE_OPERATION_IDS", "").split(",") if x.strip())
+_EXCLUDE_FILE = os.environ.get("EXCLUDE_FILE", "exclude_operation_ids.txt")
+if os.path.exists(_EXCLUDE_FILE):
+    with open(_EXCLUDE_FILE) as _f:
+        for _line in _f:
+            _line = _line.split("#")[0].strip()   # allow "# reason" comments
+            if _line:
+                EXCLUDE_IDS.add(_line)
 
 # Drop residential operations (RTC / GRO / child-placing) -- this is a daycare
 # funnel. Set DAYCARE_ONLY=false to include them.
