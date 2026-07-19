@@ -308,7 +308,10 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     for c in out_cols:
         if c not in training.columns:
             training[c] = ""
-    return training[out_cols].sort_values("activity_date", ascending=False).reset_index(drop=True)
+    # Socrata/merge leaves missing cells as NaN (a float); coerce everything to
+    # strings so downstream code can safely call .strip()/.split() etc.
+    result = training[out_cols].fillna("").astype(str).replace("nan", "")
+    return result.sort_values("activity_date", ascending=False).reset_index(drop=True)
 
 
 if __name__ == "__main__":
