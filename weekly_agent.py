@@ -43,8 +43,8 @@ TAG_BASE        = os.environ.get("TAG_BASE", "tx-ccl-cited")
 TAG_DIRECTOR    = os.environ.get("TAG_DIRECTOR", "director-training")
 TAG_ORIENTATION = os.environ.get("TAG_ORIENTATION", "orientation-training")
 
-DAYS_BACK = int(os.environ.get("DAYS_BACK", "7"))
-ANCHOR    = os.environ.get("ANCHOR", "auto")
+DAYS_BACK = int(os.environ.get("DAYS_BACK") or "7")
+ANCHOR    = os.environ.get("ANCHOR") or "auto"
 
 # Clay enrichment (optional). If set, daycares that have NO email in the open
 # data are POSTed to a Clay table webhook. Clay resolves name+city -> website ->

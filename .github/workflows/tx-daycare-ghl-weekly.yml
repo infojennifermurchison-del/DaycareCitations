@@ -11,6 +11,15 @@ on:
         description: "Dry run (print only, do NOT write to GoHighLevel)"
         type: boolean
         default: true
+      days_back:
+        description: "How many days back to pull (weekly = 7)"
+        type: string
+        default: "7"
+      anchor:
+        description: "auto = newest date in the feed; today = calendar date"
+        type: choice
+        options: [auto, today]
+        default: auto
 
 jobs:
   load-citations:
@@ -36,6 +45,8 @@ jobs:
           # "Run workflow" defaults this to true (safe preview). The scheduled
           # Monday run has no input, so it is empty -> a real live run.
           DRY_RUN_FORCE:          ${{ inputs.dry_run }}
+          DAYS_BACK:              ${{ inputs.days_back }}
+          ANCHOR:                 ${{ inputs.anchor }}
           # Optional overrides (safe to omit -> defaults in weekly_agent.py):
-          # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, DAYS_BACK, ANCHOR, PRIORITY
+          # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, PRIORITY
         run: python weekly_agent.py
