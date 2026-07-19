@@ -66,7 +66,7 @@ PRIORITY = os.environ.get("PRIORITY", "orientation,director").split(",")
 # first aid) is skipped. Override with ALLOWED_VIOLATION_TYPES if needed.
 ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
     "ALLOWED_VIOLATION_TYPES",
-    "Orientation,Annual training hours,Pre-service training,Other training"
+    "Orientation,Director training"
 ).split(",") if t.strip())
 
 # Drop residential operations (RTC / GRO / child-placing) -- this is a daycare

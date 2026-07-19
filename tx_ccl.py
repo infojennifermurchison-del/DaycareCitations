@@ -120,9 +120,14 @@ def _chunked(seq, n):
 # Classification + facility link
 # ---------------------------------------------------------------------------
 def classify(std, txt):
-    """Bucket a citation. Specific carve-outs are tested before the annual-hours
-    catch-all so 746.1305 (pre-service) isn't mislabeled as annual hours."""
+    """Bucket a citation. The DIRECTOR's own annual training (746/747.1311) is
+    kept distinct from caregiver/staff training hours, and specific carve-outs
+    are tested before the generic buckets."""
     s = f"{std} {txt}".lower()
+    # Director's OWN annual training -- standard 746/747.1311 ("Director Annual
+    # Training", incl. leadership/management hours for <5-yr directors).
+    if re.search(r"7(?:46|47)\.1311", s) or "director annual training" in s:
+        return "Director training"
     if any(k in s for k in ("cpr", "first aid", "first-aid", "rescue breathing")):
         return "Pediatric CPR / First Aid"
     if ("pre-service" in s or "preservice" in s or "pre service" in s
@@ -130,10 +135,11 @@ def classify(std, txt):
         return "Pre-service training"
     if "orientation" in s:
         return "Orientation"
-    if re.search(r"7(?:46|47)\.1309|7(?:46|47)\.1311|\(a\)\(5\)", s) or \
+    # Caregiver / staff annual training hours (746.1309, 746.1301(a)(5), etc.)
+    if re.search(r"7(?:46|47)\.1309|\(a\)\(5\)", s) or \
        any(k in s for k in ("annual training", "clock hour", "hours of training",
-                            "24 annual", "leadership", "management training")):
-        return "Annual training hours"
+                            "24 annual")):
+        return "Staff annual training"
     return "Other training"
 
 
