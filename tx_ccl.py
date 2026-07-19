@@ -284,6 +284,7 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     rename = {
         NC_OP: "operation_id",
         has("operation_name"): "operation_name",
+        has("operation_type") or has("type"): "operation_type",
         has("administrator_director_name") or has("director_name"): "contact_name",
         has("location_address") or has("address"): "location_address",
         has("mailing_address"): "mailing_address",
@@ -300,7 +301,7 @@ def fetch_training_citations(days_back=7, anchor="auto", app_token="",
     rename = {k: v for k, v in rename.items() if k and k in training.columns}
     training = training.rename(columns=rename)
 
-    out_cols = ["operation_id", "operation_name", "contact_name",
+    out_cols = ["operation_id", "operation_name", "operation_type", "contact_name",
                 "location_address", "mailing_address", "city",
                 "county", "zip", "phone", "email", "activity_date",
                 "standard_number_description", "standard_risk_level", "narrative",

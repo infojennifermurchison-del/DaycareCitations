@@ -22,6 +22,7 @@ token set, the agent runs in DRY-RUN mode and just prints what it would do.
 """
 
 import os
+import re
 import sys
 import datetime as dt
 
@@ -58,6 +59,21 @@ CLAY_WEBHOOK_URL = os.environ.get("CLAY_WEBHOOK_URL", "").strip()
 # program wins the (single) enrollment. Tags for both are still applied.
 # Order = priority.
 PRIORITY = os.environ.get("PRIORITY", "orientation,director").split(",")
+
+# Only load daycares cited for something our two offers actually address:
+# orientation, or a training-hours gap the director-training offer fixes. A
+# facility whose citations are ONLY outside this set (e.g. pediatric CPR /
+# first aid) is skipped. Override with ALLOWED_VIOLATION_TYPES if needed.
+ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
+    "ALLOWED_VIOLATION_TYPES",
+    "Orientation,Annual training hours,Pre-service training,Other training"
+).split(",") if t.strip())
+
+# Drop residential operations (RTC / GRO / child-placing) -- this is a daycare
+# funnel. Set DAYCARE_ONLY=false to include them.
+DAYCARE_ONLY = os.environ.get("DAYCARE_ONLY", "true").strip().lower() in ("1", "true", "yes")
+RESIDENTIAL_RE = re.compile(
+    r"residential|general residential|\bgro\b|treatment center|child.?placing", re.I)
 
 # DRY-RUN if there's no GHL token, OR if explicitly forced (the "dry run" toggle
 # on the GitHub Actions "Run workflow" button sets DRY_RUN_FORCE=true).
@@ -157,16 +173,32 @@ def main():
         from ghl import GHL
         ghl = GHL(GHL_TOKEN, GHL_LOCATION_ID)
 
-    loaded = skipped = enriched = errors = no_contact = 0
+    loaded = skipped = enriched = errors = no_contact = out_of_scope = 0
     for op_id, rows in facilities.items():
         r0 = rows[0]
-        programs = {program_for(r["violation_type"]) for r in rows}
+        name = r0["operation_name"] or f"Operation {op_id}"
+        types = {r["violation_type"] for r in rows}
+        vt = ", ".join(sorted(types))
+
+        # Scope filters: daycares only, and only orientation/director-training
+        # (training-hours) citations.
+        if DAYCARE_ONLY and RESIDENTIAL_RE.search(r0.get("operation_type", "")):
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: residential "
+                  f"({r0.get('operation_type','')}), not a daycare")
+            out_of_scope += 1
+            continue
+        if not (types & ALLOWED_TYPES):
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: not "
+                  f"orientation/director-training (types: {vt})")
+            out_of_scope += 1
+            continue
+
+        programs = {program_for(r["violation_type"]) for r in rows
+                    if r["violation_type"] in ALLOWED_TYPES}
         primary = pick_primary(programs)
         tags = [TAG_BASE] + [PROGRAM_TAG[p] for p in programs]
-        name = r0["operation_name"] or f"Operation {op_id}"
 
         wf = PROGRAM_WF[primary]
-        vt = ", ".join(sorted({r["violation_type"] for r in rows}))
         phone = clean_phone(r0["phone"])
         email = r0["email"] or None
         # Route: no email + Clay configured -> enrich via Clay (which writes to
@@ -175,6 +207,9 @@ def main():
         dest = "Clay->GHL (enrich)" if via_clay else "GHL direct"
         print(f"- {name} ({r0['city']}, {r0['county']}) "
               f"-> {dest} | primary: {primary} | tags: {tags} | types: {vt}")
+        print(f"    contact: {r0.get('contact_name') or 'n/a'}  |  "
+              f"phone: {r0.get('phone') or 'n/a'}  |  email: {r0.get('email') or 'n/a'}")
+        print(f"    page: {r0.get('compliance_page') or 'n/a'}")
 
         if DRY_RUN:
             if via_clay:
@@ -233,6 +268,7 @@ def main():
 
     print(f"\nDone. {loaded} loaded to GHL, {enriched} sent to Clay, "
           f"{skipped} already enrolled, {no_contact} skipped (no phone/email), "
+          f"{out_of_scope} out of scope (not daycare / not orientation-director), "
           f"{errors} errored.")
     if DRY_RUN:
         print("Set GHL_TOKEN and GHL_LOCATION_ID to run live"
