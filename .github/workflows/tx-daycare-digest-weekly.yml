@@ -1,0 +1,35 @@
+name: TX daycare 'enrich by hand' digest (weekly)
+
+# Runs Wednesday 14:00 UTC (~2 days after the Monday loader) so Clay has had
+# time to enrich and write back to GoHighLevel. Emails the daycares from this
+# week's cohort that still have no email address.
+on:
+  schedule:
+    - cron: "0 14 * * 3"
+  workflow_dispatch:
+
+jobs:
+  enrich-by-hand-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Email the 'enrich by hand' digest
+        env:
+          GHL_TOKEN:           ${{ secrets.GHL_TOKEN }}
+          GHL_LOCATION_ID:     ${{ secrets.GHL_LOCATION_ID }}
+          DIGEST_TO:           ${{ secrets.DIGEST_TO }}
+          SMTP_HOST:           ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:           ${{ secrets.SMTP_PORT }}
+          SMTP_USER:           ${{ secrets.SMTP_USER }}
+          SMTP_PASS:           ${{ secrets.SMTP_PASS }}
+          SMTP_FROM:           ${{ secrets.SMTP_FROM }}
+          # Optional: DIGEST_LOOKBACK_DAYS (default 4), TAG_BASE
+        run: python weekly_digest.py

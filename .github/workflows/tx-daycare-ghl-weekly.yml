@@ -1,0 +1,41 @@
+name: TX daycare training citations -> GoHighLevel (weekly)
+
+# Runs every Monday 13:00 UTC (~8am Central). Also runnable on demand from the
+# Actions tab (Run workflow), which is handy for a first live test.
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (print only, do NOT write to GoHighLevel)"
+        type: boolean
+        default: true
+
+jobs:
+  load-citations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Load this week's cited daycares into GoHighLevel
+        env:
+          GHL_TOKEN:              ${{ secrets.GHL_TOKEN }}
+          GHL_LOCATION_ID:        ${{ secrets.GHL_LOCATION_ID }}
+          WF_DIRECTOR_NURTURE:    ${{ secrets.WF_DIRECTOR_NURTURE }}
+          WF_ORIENTATION_NURTURE: ${{ secrets.WF_ORIENTATION_NURTURE }}
+          TX_APP_TOKEN:           ${{ secrets.TX_APP_TOKEN }}
+          CLAY_WEBHOOK_URL:       ${{ secrets.CLAY_WEBHOOK_URL }}
+          # "Run workflow" defaults this to true (safe preview). The scheduled
+          # Monday run has no input, so it is empty -> a real live run.
+          DRY_RUN_FORCE:          ${{ inputs.dry_run }}
+          # Optional overrides (safe to omit -> defaults in weekly_agent.py):
+          # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, DAYS_BACK, ANCHOR, PRIORITY
+        run: python weekly_agent.py
