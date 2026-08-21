@@ -57,6 +57,10 @@ jobs:
           # original "cited for not having their training hours" target.
           # (Pediatric CPR/first aid, pre-service, and "other" stay excluded.)
           ALLOWED_VIOLATION_TYPES: "Orientation,Director training,Staff annual training"
+          # Correction gate: "off" pursues every in-scope daycare regardless of
+          # correction status (max volume). "verified" = skip only HHS-verified
+          # closures; "any" = skip anything marked corrected.
+          CORRECTION_FILTER: "off"
           # Optional overrides (safe to omit -> defaults in weekly_agent.py):
           # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, PRIORITY
         run: python weekly_agent.py
