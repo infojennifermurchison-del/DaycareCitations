@@ -66,7 +66,7 @@ PRIORITY = os.environ.get("PRIORITY", "orientation,director").split(",")
 # first aid) is skipped. Override with ALLOWED_VIOLATION_TYPES if needed.
 ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
     "ALLOWED_VIOLATION_TYPES",
-    "Orientation,Director training"
+    "Orientation,Director training,Staff annual training"
 ).split(",") if t.strip())
 
 # Manual exclude list: operation IDs to never load (e.g. franchise-tax
@@ -89,11 +89,28 @@ DAYCARE_ONLY = os.environ.get("DAYCARE_ONLY", "true").strip().lower() in ("1", "
 RESIDENTIAL_RE = re.compile(
     r"residential|general residential|\bgro\b|treatment center|child.?placing", re.I)
 
-# Only pursue daycares whose citation is STILL OPEN. If the deficiency was
-# already corrected (fixed at inspection, or has a corrected/verified date),
-# skip it -- no point offering training for a problem they've fixed. Set
-# ONLY_UNCORRECTED=false to include corrected ones too.
-ONLY_UNCORRECTED = os.environ.get("ONLY_UNCORRECTED", "true").strip().lower() in ("1", "true", "yes")
+# How the correction status gates loading. In this dataset almost every citation
+# gets a provider-entered "corrected_date" almost immediately, so treating ANY
+# correction as "done" zeroes out the funnel. Modes:
+#   "verified" (default) -- skip only citations HHS has VERIFIED as corrected
+#                           (date_correction_verified present); pursue the rest.
+#   "any"                -- skip anything with any correction signal (strict).
+#   "off"                -- ignore correction status; pursue all in-scope.
+CORRECTION_FILTER = os.environ.get("CORRECTION_FILTER", "verified").strip().lower()
+# Back-compat: ONLY_UNCORRECTED=false forces "off".
+if os.environ.get("ONLY_UNCORRECTED", "").strip().lower() in ("0", "false", "no"):
+    CORRECTION_FILTER = "off"
+
+
+def _closed(r):
+    """Is this citation resolved enough to skip, per CORRECTION_FILTER?"""
+    if CORRECTION_FILTER == "off":
+        return False
+    if CORRECTION_FILTER == "any":
+        return str(r.get("is_corrected", "")).strip().lower() == "yes"
+    # "verified": only an HHS-verified correction counts as closed.
+    return str(r.get("date_correction_verified", "")).strip() not in ("", "nan", "None")
+
 
 # DRY-RUN if there's no GHL token, OR if explicitly forced (the "dry run" toggle
 # on the GitHub Actions "Run workflow" button sets DRY_RUN_FORCE=true).
@@ -174,7 +191,8 @@ def build_note(rows):
 # ---------------------------------------------------------------------------
 def main():
     print(f"=== TX daycare -> GHL weekly agent  ({dt.date.today()}) ===")
-    print(f"Mode: {'DRY-RUN (no GHL token)' if DRY_RUN else 'LIVE'}")
+    print(f"Mode: {'DRY-RUN (no GHL token)' if DRY_RUN else 'LIVE'}  |  "
+          f"correction filter: {CORRECTION_FILTER}")
 
     df = tx_ccl.fetch_training_citations(
         days_back=DAYS_BACK, anchor=ANCHOR, app_token=TX_APP_TOKEN)
@@ -221,13 +239,12 @@ def main():
             out_of_scope += 1
             continue
 
-        # Keep only citations still open (unless ONLY_UNCORRECTED is off).
-        open_rows = [r for r in allowed_rows
-                     if not ONLY_UNCORRECTED
-                     or str(r.get("is_corrected", "")).strip().lower() != "yes"]
+        # Keep only citations still "open" per CORRECTION_FILTER.
+        open_rows = [r for r in allowed_rows if not _closed(r)]
         if not open_rows:
-            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: citation "
-                  f"already corrected")
+            reason = ("correction verified by HHS"
+                      if CORRECTION_FILTER == "verified" else "already corrected")
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: {reason}")
             corrected_skip += 1
             continue
 
@@ -246,7 +263,7 @@ def main():
               f"-> {dest} | primary: {primary} | tags: {tags} | types: {vt}")
         print(f"    contact: {r0.get('contact_name') or 'n/a'}  |  "
               f"phone: {r0.get('phone') or 'n/a'}  |  email: {r0.get('email') or 'n/a'}")
-        print(f"    citation status: OPEN (uncorrected)  |  page: {r0.get('compliance_page') or 'n/a'}")
+        print(f"    page: {r0.get('compliance_page') or 'n/a'}")
 
         if DRY_RUN:
             if via_clay:
@@ -305,7 +322,7 @@ def main():
 
     print(f"\nDone. {loaded} loaded to GHL, {enriched} sent to Clay, "
           f"{skipped} already enrolled, {no_contact} skipped (no phone/email), "
-          f"{corrected_skip} skipped (already corrected), "
+          f"{corrected_skip} skipped (correction closed), "
           f"{out_of_scope} out of scope (not daycare / not orientation-director), "
           f"{errors} errored.")
     if DRY_RUN:
