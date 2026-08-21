@@ -13,9 +13,10 @@ handled by native GoHighLevel workflow triggers ("Appointment Booked",
 GOHIGHLEVEL_SETUP.md. This agent only gets the right people into the right
 starting sequence with the right tag; GHL takes over from there.
 
-Idempotency: GHL upsert dedupes by email/phone. A contact that already carries
-the program tag is skipped (not re-enrolled, no duplicate note), so running the
-agent again -- or a facility being cited two weeks in a row -- won't spam them.
+Idempotency: GHL upsert dedupes by email/phone. After a contact is enrolled it
+gets a `<program>-enrolled` marker tag; a contact that already carries that
+marker is skipped (not re-enrolled, no duplicate note), so running the agent
+again -- or a facility being cited two weeks in a row -- won't spam them.
 
 Configuration comes from environment variables (see CONFIG below). With no GHL
 token set, the agent runs in DRY-RUN mode and just prints what it would do.
@@ -128,6 +129,11 @@ def program_for(violation_type):
 
 PROGRAM_TAG = {"director": TAG_DIRECTOR, "orientation": TAG_ORIENTATION}
 PROGRAM_WF  = {"director": WF_DIRECTOR_NURTURE, "orientation": WF_ORIENTATION_NURTURE}
+# Marker tag applied only AFTER a contact is enrolled. Dedup keys off THIS, not
+# the descriptive program tag (which the upsert applies immediately and would
+# otherwise always look "already enrolled").
+PROGRAM_ENROLLED_TAG = {"director": f"{TAG_DIRECTOR}-enrolled",
+                        "orientation": f"{TAG_ORIENTATION}-enrolled"}
 
 
 def pick_primary(programs):
@@ -302,10 +308,11 @@ def main():
                 postal_code=r0["zip"], source="TX CCR weekly", tags=tags,
                 website=r0["compliance_page"])  # stored so the digest can link it
 
-            # already in this program? skip enrollment + note (no double-touch)
-            program_tag = PROGRAM_TAG[primary]
-            if program_tag in (existing or []):
-                print(f"    already tagged '{program_tag}' -> skip enroll")
+            # Dedup on the post-enrollment marker (NOT the descriptive program
+            # tag, which the upsert just applied). Already enrolled -> skip.
+            enrolled_tag = PROGRAM_ENROLLED_TAG[primary]
+            if enrolled_tag in (existing or []):
+                print(f"    already enrolled ('{enrolled_tag}') -> skip")
                 skipped += 1
                 continue
 
@@ -315,6 +322,8 @@ def main():
                 print(f"    enrolled in workflow {wf}")
             else:
                 print(f"    (!) no workflow id set for '{primary}' -- tagged only")
+            # Mark enrolled so future runs skip this contact (no double-touch).
+            ghl.add_tags(contact_id, [enrolled_tag])
             loaded += 1
         except Exception as e:
             print(f"    ! error for {name}: {e}")
