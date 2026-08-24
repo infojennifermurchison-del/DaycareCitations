@@ -3,9 +3,11 @@
 Once a week this:
   1. Pulls daycares cited in the last week for TRAINING violations (tx_ccl).
   2. Upserts each into GoHighLevel as a contact (name / phone / email / address).
-  3. Tags it `director-training` or `orientation-training` by violation type.
-  4. Enrolls it in the matching nurture workflow (offer the cure/prevent training
-     for directors; build a custom on-demand orientation for orientation gaps).
+  3. Tags it by the citation type (director / staff / orientation training).
+  4. Enrolls it in the matching nurture workflow -- but ONLY for programs that
+     have an accurate email sequence. Staff/caregiver-training citations are
+     tagged and held (no workflow) so the director-hours email is never sent to
+     a facility that was not cited under the director standard (746.1311).
 
 The booked-call and no-show branching is intentionally NOT done here -- it is
 handled by native GoHighLevel workflow triggers ("Appointment Booked",
@@ -39,32 +41,32 @@ TX_APP_TOKEN     = os.environ.get("TX_APP_TOKEN", "").strip()   # optional Socra
 # Workflow IDs (from the GHL workflow URL). Required to actually enroll.
 WF_DIRECTOR_NURTURE    = os.environ.get("WF_DIRECTOR_NURTURE", "").strip()
 WF_ORIENTATION_NURTURE = os.environ.get("WF_ORIENTATION_NURTURE", "").strip()
+# Staff/caregiver training has no accurate sequence yet -> held (tagged only).
+WF_STAFF_NURTURE       = os.environ.get("WF_STAFF_NURTURE", "").strip()
 
 # Tags
 TAG_BASE        = os.environ.get("TAG_BASE", "tx-ccl-cited")
 TAG_DIRECTOR    = os.environ.get("TAG_DIRECTOR", "director-training")
 TAG_ORIENTATION = os.environ.get("TAG_ORIENTATION", "orientation-training")
+TAG_STAFF       = os.environ.get("TAG_STAFF", "staff-training")
 
 DAYS_BACK = int(os.environ.get("DAYS_BACK") or "7")
 ANCHOR    = os.environ.get("ANCHOR") or "auto"
 
 # Clay enrichment (optional). If set, daycares that have NO email in the open
 # data are POSTed to a Clay table webhook. Clay resolves name+city -> website ->
-# director/owner -> email, then writes the finished contact into GoHighLevel
-# (with the program tag + workflow) via Clay's native GHL action. See
-# CLAY_ENRICHMENT.md. Facilities that already have an email skip Clay and are
-# loaded straight to GHL by this agent.
+# director/owner -> email, then writes the finished contact into GHL -- with the
+# same program tag the agent sent, so routing is preserved. See CLAY_ENRICHMENT.md.
 CLAY_WEBHOOK_URL = os.environ.get("CLAY_WEBHOOK_URL", "").strip()
 
-# When a facility has BOTH orientation and other training deficiencies, which
-# program wins the (single) enrollment. Tags for both are still applied.
+# When a facility has citations in more than one program, which one wins the
+# (single) enrollment. Tags for every matched program are still applied.
 # Order = priority.
-PRIORITY = os.environ.get("PRIORITY", "orientation,director").split(",")
+PRIORITY = os.environ.get("PRIORITY", "orientation,director,staff").split(",")
 
-# Only load daycares cited for something our two offers actually address:
-# orientation, or a training-hours gap the director-training offer fixes. A
-# facility whose citations are ONLY outside this set (e.g. pediatric CPR /
-# first aid) is skipped. Override with ALLOWED_VIOLATION_TYPES if needed.
+# Only load daycares cited for something our offers address: orientation, the
+# director's own annual training, or staff/caregiver annual training hours.
+# Citations outside this set (CPR/first aid, pre-service, "other") are skipped.
 ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
     "ALLOWED_VIOLATION_TYPES",
     "Orientation,Director training,Staff annual training"
@@ -73,7 +75,7 @@ ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
 # Manual exclude list: operation IDs to never load (e.g. franchise-tax
 # delinquent, or otherwise disqualified after review). Sourced from BOTH the
 # EXCLUDE_OPERATION_IDS env var (one-off runs) AND a committed file
-# (exclude_operation_ids.txt) so the scheduled weekly run honors it too.
+# (exclude_operation_ids.txt) so the scheduled run honors it too.
 EXCLUDE_IDS = set(x.strip() for x in
                   os.environ.get("EXCLUDE_OPERATION_IDS", "").split(",") if x.strip())
 _EXCLUDE_FILE = os.environ.get("EXCLUDE_FILE", "exclude_operation_ids.txt")
@@ -93,8 +95,7 @@ RESIDENTIAL_RE = re.compile(
 # How the correction status gates loading. In this dataset almost every citation
 # gets a provider-entered "corrected_date" almost immediately, so treating ANY
 # correction as "done" zeroes out the funnel. Modes:
-#   "verified" (default) -- skip only citations HHS has VERIFIED as corrected
-#                           (date_correction_verified present); pursue the rest.
+#   "verified" (default) -- skip only citations HHS has VERIFIED as corrected.
 #   "any"                -- skip anything with any correction signal (strict).
 #   "off"                -- ignore correction status; pursue all in-scope.
 CORRECTION_FILTER = os.environ.get("CORRECTION_FILTER", "verified").strip().lower()
@@ -123,17 +124,26 @@ DRY_RUN = _FORCE_DRY or not (GHL_TOKEN and GHL_LOCATION_ID)
 # Mapping: violation_type -> program
 # ---------------------------------------------------------------------------
 def program_for(violation_type):
-    """Which offer this citation maps to."""
-    return "orientation" if violation_type == "Orientation" else "director"
+    """Which offer this citation maps to. Staff/caregiver training is kept
+    SEPARATE from director training so the director-hours (746.1311) email is
+    NEVER sent to a facility that was not cited under that standard."""
+    if violation_type == "Orientation":
+        return "orientation"
+    if violation_type == "Director training":
+        return "director"
+    return "staff"   # Staff annual training (and any other allowed non-director)
 
 
-PROGRAM_TAG = {"director": TAG_DIRECTOR, "orientation": TAG_ORIENTATION}
-PROGRAM_WF  = {"director": WF_DIRECTOR_NURTURE, "orientation": WF_ORIENTATION_NURTURE}
+PROGRAM_TAG = {"director": TAG_DIRECTOR, "orientation": TAG_ORIENTATION,
+               "staff": TAG_STAFF}
+# Staff has NO workflow -> tagged and held, not emailed (no accurate sequence yet).
+PROGRAM_WF  = {"director": WF_DIRECTOR_NURTURE, "orientation": WF_ORIENTATION_NURTURE,
+               "staff": WF_STAFF_NURTURE}
 # Marker tag applied only AFTER a contact is enrolled. Dedup keys off THIS, not
-# the descriptive program tag (which the upsert applies immediately and would
-# otherwise always look "already enrolled").
+# the descriptive program tag (which the upsert applies immediately).
 PROGRAM_ENROLLED_TAG = {"director": f"{TAG_DIRECTOR}-enrolled",
-                        "orientation": f"{TAG_ORIENTATION}-enrolled"}
+                        "orientation": f"{TAG_ORIENTATION}-enrolled",
+                        "staff": f"{TAG_STAFF}-enrolled"}
 
 
 def pick_primary(programs):
@@ -164,7 +174,7 @@ def clay_payload(op_id, rows, primary, tags):
         "county": r0["county"],
         "phone": clean_phone(r0["phone"]) or "",
         "email": r0["email"] or "",           # usually blank -> Clay fills it
-        "program": primary,                    # "director" | "orientation"
+        "program": primary,                    # "director" | "orientation" | "staff"
         "tags": ",".join(tags),
         "violation_types": ", ".join(sorted({r["violation_type"] for r in rows})),
         "cited_date": r0["activity_date"][:10],
@@ -217,7 +227,7 @@ def main():
         from ghl import GHL
         ghl = GHL(GHL_TOKEN, GHL_LOCATION_ID)
 
-    loaded = skipped = enriched = errors = no_contact = out_of_scope = corrected_skip = 0
+    loaded = held = skipped = enriched = errors = no_contact = out_of_scope = corrected_skip = 0
     for op_id, rows in facilities.items():
         r0 = rows[0]
         name = r0["operation_name"] or f"Operation {op_id}"
@@ -231,8 +241,7 @@ def main():
             out_of_scope += 1
             continue
 
-        # Scope filters: daycares only, and only orientation/director-training
-        # (training-hours) citations.
+        # Scope filters: daycares only, and only training-hours citations.
         if DAYCARE_ONLY and RESIDENTIAL_RE.search(r0.get("operation_type", "")):
             print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: residential "
                   f"({r0.get('operation_type','')}), not a daycare")
@@ -240,8 +249,8 @@ def main():
             continue
         allowed_rows = [r for r in rows if r["violation_type"] in ALLOWED_TYPES]
         if not allowed_rows:
-            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: not "
-                  f"orientation/director-training (types: {vt})")
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: not a "
+                  f"training-hours citation (types: {vt})")
             out_of_scope += 1
             continue
 
@@ -274,8 +283,10 @@ def main():
         if DRY_RUN:
             if via_clay:
                 enriched += 1
-            else:
+            elif wf:
                 loaded += 1
+            else:
+                held += 1
             continue
 
         # Isolate each facility so one bad record can't kill the whole run.
@@ -309,10 +320,10 @@ def main():
                 website=r0["compliance_page"])  # stored so the digest can link it
 
             # Dedup on the post-enrollment marker (NOT the descriptive program
-            # tag, which the upsert just applied). Already enrolled -> skip.
+            # tag, which the upsert just applied). Already handled -> skip.
             enrolled_tag = PROGRAM_ENROLLED_TAG[primary]
             if enrolled_tag in (existing or []):
-                print(f"    already enrolled ('{enrolled_tag}') -> skip")
+                print(f"    already handled ('{enrolled_tag}') -> skip")
                 skipped += 1
                 continue
 
@@ -320,26 +331,30 @@ def main():
             if wf:
                 ghl.add_to_workflow(contact_id, wf)
                 print(f"    enrolled in workflow {wf}")
+                ghl.add_tags(contact_id, [enrolled_tag])
+                loaded += 1
             else:
-                print(f"    (!) no workflow id set for '{primary}' -- tagged only")
-            # Mark enrolled so future runs skip this contact (no double-touch).
-            ghl.add_tags(contact_id, [enrolled_tag])
-            loaded += 1
+                # No accurate sequence for this program yet -> tag and HOLD.
+                # Do NOT mark enrolled, so it can be picked up later once a
+                # sequence exists, but it is NOT emailed now.
+                print(f"    '{primary}' has no workflow -> tagged and HELD "
+                      f"(not emailed)")
+                held += 1
         except Exception as e:
             print(f"    ! error for {name}: {e}")
             errors += 1
 
-    print(f"\nDone. {loaded} loaded to GHL, {enriched} sent to Clay, "
-          f"{skipped} already enrolled, {no_contact} skipped (no phone/email), "
+    print(f"\nDone. {loaded} enrolled in GHL, {held} tagged & held (no sequence), "
+          f"{enriched} sent to Clay, {skipped} already handled, "
+          f"{no_contact} skipped (no phone/email), "
           f"{corrected_skip} skipped (correction closed), "
-          f"{out_of_scope} out of scope (not daycare / not orientation-director), "
-          f"{errors} errored.")
+          f"{out_of_scope} out of scope, {errors} errored.")
     if DRY_RUN:
         print("Set GHL_TOKEN and GHL_LOCATION_ID to run live"
               + (" (and CLAY_WEBHOOK_URL to enrich)." if not CLAY_WEBHOOK_URL else "."))
     # Fail the run only if nothing succeeded but something errored -- that signals
     # a systemic problem (bad token, wrong IDs) rather than one odd record.
-    if errors and not (loaded or enriched):
+    if errors and not (loaded or held or enriched):
         sys.exit(1)
 
 
