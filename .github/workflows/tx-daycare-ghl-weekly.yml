@@ -53,13 +53,16 @@ jobs:
           DAYS_BACK:              ${{ inputs.days_back }}
           ANCHOR:                 ${{ inputs.anchor }}
           EXCLUDE_OPERATION_IDS:  ${{ inputs.exclude_ids }}
-          # Scope: training-HOURS citations -- staff/caregiver annual training
-          # + the director's own annual training + orientation.
-          ALLOWED_VIOLATION_TYPES: "Orientation,Director training,Staff annual training"
+          # Approved product = director training (746.1311). Load ONLY genuine
+          # director (and orientation) citations -- NOT caregiver/staff training,
+          # which is not the approved offer and caused every prior mismatch.
+          ALLOWED_VIOLATION_TYPES: "Orientation,Director training"
           # Correction gate: "verified" skips citations HHS has already VERIFIED
           # as corrected, so we never email a provider who has fixed the issue.
-          # ("off" = pursue all, which wrongly emailed already-corrected providers.)
           CORRECTION_FILTER: "verified"
+          # Only load licensed CENTERS (director training is a center product;
+          # in-home providers have a primary caregiver, not a director).
+          CENTERS_ONLY: "true"
           # Optional overrides (safe to omit -> defaults in weekly_agent.py):
           # TAG_DIRECTOR, TAG_ORIENTATION, TAG_STAFF, PRIORITY
         run: python weekly_agent.py
