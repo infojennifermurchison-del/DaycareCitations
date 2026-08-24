@@ -44,6 +44,7 @@ jobs:
           GHL_LOCATION_ID:        ${{ secrets.GHL_LOCATION_ID }}
           WF_DIRECTOR_NURTURE:    ${{ secrets.WF_DIRECTOR_NURTURE }}
           WF_ORIENTATION_NURTURE: ${{ secrets.WF_ORIENTATION_NURTURE }}
+          WF_STAFF_NURTURE:       ${{ secrets.WF_STAFF_NURTURE }}
           TX_APP_TOKEN:           ${{ secrets.TX_APP_TOKEN }}
           CLAY_WEBHOOK_URL:       ${{ secrets.CLAY_WEBHOOK_URL }}
           # "Run workflow" defaults this to true (safe preview). The scheduled
@@ -53,14 +54,12 @@ jobs:
           ANCHOR:                 ${{ inputs.anchor }}
           EXCLUDE_OPERATION_IDS:  ${{ inputs.exclude_ids }}
           # Scope: training-HOURS citations -- staff/caregiver annual training
-          # + the director's own annual training + orientation. This is the
-          # original "cited for not having their training hours" target.
-          # (Pediatric CPR/first aid, pre-service, and "other" stay excluded.)
+          # + the director's own annual training + orientation.
           ALLOWED_VIOLATION_TYPES: "Orientation,Director training,Staff annual training"
-          # Correction gate: "off" pursues every in-scope daycare regardless of
-          # correction status (max volume). "verified" = skip only HHS-verified
-          # closures; "any" = skip anything marked corrected.
-          CORRECTION_FILTER: "off"
+          # Correction gate: "verified" skips citations HHS has already VERIFIED
+          # as corrected, so we never email a provider who has fixed the issue.
+          # ("off" = pursue all, which wrongly emailed already-corrected providers.)
+          CORRECTION_FILTER: "verified"
           # Optional overrides (safe to omit -> defaults in weekly_agent.py):
-          # TAG_DIRECTOR, TAG_ORIENTATION, TAG_BASE, PRIORITY
+          # TAG_DIRECTOR, TAG_ORIENTATION, TAG_STAFF, PRIORITY
         run: python weekly_agent.py
