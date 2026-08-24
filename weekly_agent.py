@@ -64,12 +64,12 @@ CLAY_WEBHOOK_URL = os.environ.get("CLAY_WEBHOOK_URL", "").strip()
 # Order = priority.
 PRIORITY = os.environ.get("PRIORITY", "orientation,director,staff").split(",")
 
-# Only load daycares cited for something our offers address: orientation, the
-# director's own annual training, or staff/caregiver annual training hours.
-# Citations outside this set (CPR/first aid, pre-service, "other") are skipped.
+# Only load daycares cited for something our offers address. The approved
+# product is director training (746.1311); orientation is the secondary offer.
+# Caregiver/staff training is NOT loaded by default (not the approved offer).
 ALLOWED_TYPES = set(t.strip() for t in os.environ.get(
     "ALLOWED_VIOLATION_TYPES",
-    "Orientation,Director training,Staff annual training"
+    "Orientation,Director training"
 ).split(",") if t.strip())
 
 # Manual exclude list: operation IDs to never load (e.g. franchise-tax
@@ -91,6 +91,11 @@ if os.path.exists(_EXCLUDE_FILE):
 DAYCARE_ONLY = os.environ.get("DAYCARE_ONLY", "true").strip().lower() in ("1", "true", "yes")
 RESIDENTIAL_RE = re.compile(
     r"residential|general residential|\bgro\b|treatment center|child.?placing", re.I)
+
+# Only load licensed CENTERS. Director training is a center product; in-home
+# operations (child-care homes) have a primary caregiver, not a director.
+CENTERS_ONLY = os.environ.get("CENTERS_ONLY", "false").strip().lower() in ("1", "true", "yes")
+HOME_RE = re.compile(r"child.?care home|family home|registered home|listed home|\bhome\b", re.I)
 
 # How the correction status gates loading. In this dataset almost every citation
 # gets a provider-entered "corrected_date" almost immediately, so treating ANY
@@ -208,7 +213,7 @@ def build_note(rows):
 def main():
     print(f"=== TX daycare -> GHL weekly agent  ({dt.date.today()}) ===")
     print(f"Mode: {'DRY-RUN (no GHL token)' if DRY_RUN else 'LIVE'}  |  "
-          f"correction filter: {CORRECTION_FILTER}")
+          f"correction filter: {CORRECTION_FILTER}  |  centers_only: {CENTERS_ONLY}")
 
     df = tx_ccl.fetch_training_citations(
         days_back=DAYS_BACK, anchor=ANCHOR, app_token=TX_APP_TOKEN)
@@ -233,6 +238,7 @@ def main():
         name = r0["operation_name"] or f"Operation {op_id}"
         types = {r["violation_type"] for r in rows}
         vt = ", ".join(sorted(types))
+        op_type = r0.get("operation_type", "")
 
         # Manual exclude list (e.g. franchise-tax delinquent).
         if str(op_id) in EXCLUDE_IDS:
@@ -241,16 +247,21 @@ def main():
             out_of_scope += 1
             continue
 
-        # Scope filters: daycares only, and only training-hours citations.
-        if DAYCARE_ONLY and RESIDENTIAL_RE.search(r0.get("operation_type", "")):
+        # Scope filters: no residential, centers only, training-hours citations.
+        if DAYCARE_ONLY and RESIDENTIAL_RE.search(op_type):
             print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: residential "
-                  f"({r0.get('operation_type','')}), not a daycare")
+                  f"({op_type}), not a daycare")
+            out_of_scope += 1
+            continue
+        if CENTERS_ONLY and HOME_RE.search(op_type):
+            print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: in-home "
+                  f"operation ({op_type}), not a center")
             out_of_scope += 1
             continue
         allowed_rows = [r for r in rows if r["violation_type"] in ALLOWED_TYPES]
         if not allowed_rows:
             print(f"- {name} ({r0['city']}, {r0['county']}) -> SKIP: not a "
-                  f"training-hours citation (types: {vt})")
+                  f"director/orientation citation (types: {vt})")
             out_of_scope += 1
             continue
 
