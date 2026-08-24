@@ -13,5 +13,7 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install requests
-      - name: Run TRS probe
+      - name: Run TRS dataset probe
         run: python probe_trs.py
+      - name: Run operator-page probe
+        run: python probe_page.py
